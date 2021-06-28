@@ -1,7 +1,8 @@
 #!/usr/bin/python3.9
 
+from config import PROJECT_ROOT
+from docker.services import COMPOSE, DOCKERFILE
 import os
-from posixpath import relpath
 import sys
 import getopt
 import random
@@ -32,30 +33,60 @@ class Project():
 
     def __init__(self, title: str = None, location: str = None, options: dict = {}) -> None:
         self.title = title
-        self.location = location or "/home/jsyme/projects/"
-        self.react_app = False if "react-app" not in options.keys() else True
+        self.location = location or PROJECT_ROOT
+        self.options = options
+        self.dockercompose = None
+        self.root_dir = Path(self.location, self.title)
 
     def set_title(self):
         word_file = "/usr/share/dict/words"
         WORDS = open(word_file).read().splitlines()
 
         def random_word():
+            # Create a random 2 word title
             wrd = random.choice(WORDS)
             return "".join(w for w in wrd if w.isalnum()).lower()
-        self.title = f'{random_word()}-{random_word()}'
 
-    def create_directory(self):
+        title = f'{random_word()}-{random_word()}'
+
+        accepted = input(f'Accept title: {title}\n[y/n]')
+        if accepted.lower() in ["y", "yes"]:
+            self.title = title
+        else:
+            self.set_title()
+
+    def create_directory(self, dir):
         # If the project location is not a dir it will be created
-        path = f'{os.path.realpath(self.location)}'
+        path = f'{os.path.realpath(dir)}'
         create = input(f'Create: {path} ?  \n[y/n] ')
         if create.lower() in ["y", "yes"]:
             print(f'Creating location: {path}')
             os.makedirs(path)
         print(f'Creating {path}')
 
+    def update_dockercompose(self, service: str):
+        dockercompose_root = """version: '3.7'\nservices:"""
+        if not self.dockercompose:
+            self.dockercompose = dockercompose_root
+        try:
+            self.dockercompose += COMPOSE[service](self.title)
+            service_root = Path(self.root_dir, service)
+            os.chdir(service_root)
+            with open("Dockerfile", "w") as dockerfile:
+                dockerfile.write(DOCKERFILE[service])
+
+        except Exception as e:
+            print(e)
+
+    def write_dockercompose(self):
+        print("Writing docker-compose.yml")
+        os.chdir(self.root_dir)
+        with open("docker-compose.yml", "w") as dockercompose:
+            dockercompose.write(self.dockercompose)
+
     def create_react_app(self):
         # Creates a react typescript skeleton
-        path = Path(self.location, self.title)
+        path = self.root_dir
         if not os.path.isdir(path):
             os.mkdir(path)  # Create project root
         os.chdir(path)  # Change to project root
@@ -72,8 +103,10 @@ class Project():
 
         def yarn_cra():
             # create-react-app typescript app
-            cra = subprocess.Popen(
-                ["yarn", "create", "react-app", "app", "--template", "typescript"])
+            command = ["yarn", "create", "react-app", "app"]
+            if "typescript" in self.options.keys():
+                command = [*command, "--template", "typescript"]
+            cra = subprocess.Popen(command)
             cra_output, cra_error = cra.communicate()
             if cra_error:
                 print(cra_error)
@@ -84,12 +117,15 @@ class Project():
             print("\nCreating React Folders:\n")
             src = Path("app", "src")
             os.chdir(src)
+            base = "ts"
+            if "typescript" not in self.options.keys():
+                base = "js"
             folders = [
-                Path("ts", "components"),
-                Path("ts", "types"),
-                Path("data", "db"),
+                Path(base, "components"),
+                Path(base, "types"),
                 Path("assets", "css"),
-                Path("assets", "img")
+                Path("assets", "img"),
+                "data",
             ]
             for folder in folders:
                 print(folder)
@@ -98,7 +134,7 @@ class Project():
         def yarn_deps():
             print("\nInstalling Dependencies")
             deps = subprocess.Popen(
-                ["yarn", "add", "node-sass@4.14.1", "jotai"]
+                ["yarn", "add", "node-sass", "jotai"]
             )
             deps_output, deps_error = deps.communicate()
             if deps_error:
@@ -128,35 +164,28 @@ class Project():
                             else:
                                 print(line)
 
-        def create_dockerfile():
-            root_dir = Path(self.location, self.title, "app")
-            os.chdir(root_dir)
-            docker_commands = """FROM node:14\nWORKDIR /app\nENV PATH /app/node_modules/.bin:$PATH\nCOPY package.json ./\nCOPY yarn.lock ./\nRUN yarn install --silent\nRUN yarn global add react-scripts@4.0.3\nCOPY . /app/"""
-
-            with open("Dockerfile", "w") as Dockerfile:
-                Dockerfile.write(docker_commands)
-                print("Dockerfile Created")
-
         yarn_install()
         yarn_cra()
         yarn_deps()
-        create_dockerfile()
+        self.update_dockercompose("app")
 
     def create_project(self):
+        options = self.options.keys()
         try:
             if not self.title:
                 # set random title if not provided
                 self.set_title()
             if not os.path.isdir(self.location):
                 # create path for project root
-                self.create_directory()
-            print(f'Creating {self.title} in {self.location}')
-            if self.react_app:
+                self.create_directory(self.location)
+            if "react-app" in options:
                 try:
                     self.create_react_app()
                 except SystemError:
                     print("ERROR: creating react app")
                     return
+            if "dockerize" in options:
+                self.write_dockercompose()
 
             exit
 
@@ -165,22 +194,37 @@ class Project():
 
 
 def get_args() -> dict:
+    help = """HELP:
+    [r] - create-react-app
+    [t] - Typescript when combined with -r
+    [d] - Dockerize - create docker-compose file for services created by project
+    [f] - Create a flask api
+    [n] - Name: project name - defaults to random two(2) words
+    [l] - Location: project location
+    """
     payload = {"options": {}}
     argument_list = sys.argv[1:]
-    opts = "rn:l:h"
+    opts = "rtdn:l:h"
     try:
         arguments, values = getopt.getopt(argument_list, opts)
 
         for currentArgument, currentValue in arguments:
 
             if currentArgument in ("-h"):
-                print("Diplaying Help")
+                print(help)
+                return {"help": True}
 
             elif currentArgument in ("-r"):
-                payload["options"] = {
-                    **payload["options"],
-                    "react-app": True
-                }
+                payload["options"]["react-app"] = True
+
+            elif currentArgument in ("-t"):
+                payload["options"]["typescript"] = True
+
+            elif currentArgument in ("-f"):
+                payload["options"]["flask"] = True
+
+            elif currentArgument in ("-d"):
+                payload["options"]["dockerize"] = True
 
             elif currentArgument in ("-n"):
                 payload["title"] = currentValue
@@ -195,5 +239,15 @@ def get_args() -> dict:
 
 
 if __name__ == "__main__":
+    creatables = ["react-app", "flask"]
+
     args = get_args()
-    p = Project(**args).create_project()
+    is_creating = False
+    for k in args["options"].keys():
+        if k in creatables:
+            is_creating = True
+            break
+    if is_creating:
+        p = Project(**args).create_project()
+    elif "help" not in args.keys():
+        print("No project type selected.\nUse -h for HELP.")
