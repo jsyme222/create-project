@@ -1,6 +1,8 @@
 #!/usr/bin/python3.9
 
-from config import PROJECT_ROOT
+from genericpath import exists
+from utils import is_tool
+from config import NODE_TOOL, PROJECT_ROOT
 from docker.services import COMPOSE, DOCKERFILE
 import os
 import sys
@@ -9,6 +11,7 @@ import random
 import subprocess
 import fileinput
 from pathlib import Path
+from fastapi.create_fast_api import build_fastapi_structure
 
 
 class Project():
@@ -25,8 +28,18 @@ class Project():
     --------
     set_title()
         takes 2 random words and builds a single title;
-    create_directory()
-        create the given location if not exists;
+        - eg. `torturous-flamingo`
+        ** Requires input to accept title as randomized 
+            titles can frequently be *ahem* innappropriate...
+    create_directory(dir: str)
+        create `dir` if not exists;
+    update_dockercompose(service: str)
+        Updates docker compose data to contain service;
+    write_dockercompose()
+        Writes `docker-compose.yml` to disk;
+    create_react_app()
+        Creates a react app via `create-react-app`;
+        -t Indicates project to created with typescript tempplate
     create_project()
         create project skeleton within location;
     '''
@@ -37,6 +50,8 @@ class Project():
         self.options = options
         self.dockercompose = None
         self.root_dir = Path(self.location, self.title)
+
+        self.errors = ""
 
     def set_title(self):
         word_file = "/usr/share/dict/words"
@@ -89,21 +104,38 @@ class Project():
         path = self.root_dir
         if not os.path.isdir(path):
             os.mkdir(path)  # Create project root
+        else:
+            message = f'{path} already exists.\n\n \
+            --> Change project name (-n) or location (-l).\n\nSee HELP -h for more.'
+            raise SystemError(message)
         os.chdir(path)  # Change to project root
 
-        def yarn_install():
-            # install package.json
-            yarn = subprocess.Popen(
-                ["yarn"])
-            yarn_output, yarn_error = yarn.communicate()
-            if yarn_error:
-                print(yarn_error)
-                raise SystemError
-            print(yarn_output)
+        node_tool_commands = {
+            "yarn": {
+                "invoke": "yarn",
+                "add": "add",
+            },
+            "npm": {
+                "invoke": "npm",
+                "add": "install"
+            }
+        }
+        node_command = node_tool_commands[NODE_TOOL]
 
-        def yarn_cra():
+        def node_install():
+            # install package.json
+            node = subprocess.Popen(
+                [node_command["invoke"], "install"])
+            node_output, node_error = node.communicate()
+            if node_error:
+                print(node_error)
+                raise SystemError
+            print(node_output)
+
+        def node_cra():
             # create-react-app typescript app
-            command = ["yarn", "create", "react-app", "app"]
+            print("\nCreating React App\n")
+            command = [node_command["invoke"], "create", "react-app", "app"]
             if "typescript" in self.options.keys():
                 command = [*command, "--template", "typescript"]
             cra = subprocess.Popen(command)
@@ -131,10 +163,11 @@ class Project():
                 print(folder)
                 os.makedirs(folder)
 
-        def yarn_deps():
-            print("\nInstalling Dependencies")
+        def node_deps():
+            print("\nInstalling Node Dependencies\n")
             deps = subprocess.Popen(
-                ["yarn", "add", "node-sass", "jotai"]
+                [node_command["invoke"],
+                    node_command["add"], "node-sass", "jotai"]
             )
             deps_output, deps_error = deps.communicate()
             if deps_error:
@@ -163,11 +196,16 @@ class Project():
                                 print(line.replace(".css", ".scss"), end=" ")
                             else:
                                 print(line)
+        if is_tool(NODE_TOOL):
+            node_install()
+            node_cra()
+            node_deps()
+            self.update_dockercompose("app")
+        else:
+            print(f'ERROR: \'{NODE_TOOL}\' not installed')
 
-        yarn_install()
-        yarn_cra()
-        yarn_deps()
-        self.update_dockercompose("app")
+    def create_fast_api(self) -> None:
+        build_fastapi_structure(self.root_dir)
 
     def create_project(self):
         options = self.options.keys()
@@ -176,13 +214,23 @@ class Project():
                 # set random title if not provided
                 self.set_title()
             if not os.path.isdir(self.location):
-                # create path for project root
+                # create path for project
                 self.create_directory(self.location)
+            if not os.path.isdir(self.root_dir):
+                # create path for project root
+                self.create_directory(self.root_dir)
             if "react-app" in options:
                 try:
                     self.create_react_app()
-                except SystemError:
+                except SystemError as e:
                     print("ERROR: creating react app")
+                    print(e)
+                    return
+            if "fastapi" in options:
+                try:
+                    self.create_fast_api()
+                except Exception as e:
+                    print(e)
                     return
             if "dockerize" in options:
                 self.write_dockercompose()
@@ -198,13 +246,13 @@ def get_args() -> dict:
     [r] - create-react-app
     [t] - Typescript when combined with -r
     [d] - Dockerize - create docker-compose file for services created by project
-    [f] - Create a flask api
+    [f] - Create a FastAPI
     [n] - Name: project name - defaults to random two(2) words
     [l] - Location: project location
     """
     payload = {"options": {}}
     argument_list = sys.argv[1:]
-    opts = "rtdn:l:h"
+    opts = "rtfdn:l:h"
     try:
         arguments, values = getopt.getopt(argument_list, opts)
 
@@ -221,7 +269,7 @@ def get_args() -> dict:
                 payload["options"]["typescript"] = True
 
             elif currentArgument in ("-f"):
-                payload["options"]["flask"] = True
+                payload["options"]["fastapi"] = True
 
             elif currentArgument in ("-d"):
                 payload["options"]["dockerize"] = True
@@ -239,7 +287,7 @@ def get_args() -> dict:
 
 
 if __name__ == "__main__":
-    creatables = ["react-app", "flask"]
+    creatables = ["react-app", "fastapi"]
 
     args = get_args()
     is_creating = False
