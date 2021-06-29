@@ -22,10 +22,10 @@ def build_fastapi_structure(proj_location: str) -> None:
     os.chdir(proj_location)
     print("\nCreating api directory\n")
     os.mkdir(api)
+    os.chdir(api)
     with open("requirements.txt", "w") as reqs:
         print("\nWriting 'requirements.txt'\n")
         reqs.write(requirements_txt)
-    os.chdir(api)
     with open("main.py", "w") as file:
         print("\nWriting 'api/main.py'\n")
         file.write(main_py.format(TITLE, '{"hello": "world"}'))

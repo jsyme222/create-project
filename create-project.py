@@ -79,19 +79,31 @@ class Project():
             os.makedirs(path)
         print(f'Creating {path}')
 
-    def update_dockercompose(self, service: str):
-        dockercompose_root = """version: '3.7'\nservices:"""
+    def update_dockercompose(self, service_type: str, service_name: str = ""):
         if not self.dockercompose:
-            self.dockercompose = dockercompose_root
+            self.dockercompose = """version: '3.7'\nservices:"""
         try:
-            self.dockercompose += COMPOSE[service](self.title)
-            service_root = Path(self.root_dir, service)
-            os.chdir(service_root)
-            with open("Dockerfile", "w") as dockerfile:
-                dockerfile.write(DOCKERFILE[service])
+            self.dockercompose += COMPOSE[service_type](self.title)
 
-        except Exception as e:
-            print(e)
+        except Exception:
+            try:
+                self.dockercompose += COMPOSE[service_type][service_name](
+                    self.title)
+            except Exception as e:
+                print(e)
+                return
+
+        service_root = Path(self.root_dir, service_type)
+        os.chdir(service_root)
+        with open("Dockerfile", "w") as dockerfile:
+            try:
+                dockerfile.write(DOCKERFILE[service_type])
+            except Exception:
+                try:
+                    dockerfile.write(DOCKERFILE[service_type][service_name])
+                except Exception as e:
+                    print(e)
+                    return
 
     def write_dockercompose(self):
         print("Writing docker-compose.yml")
@@ -206,6 +218,7 @@ class Project():
 
     def create_fast_api(self) -> None:
         build_fastapi_structure(self.root_dir)
+        self.update_dockercompose("api", "fastapi")
 
     def create_project(self):
         options = self.options.keys()
